@@ -1,0 +1,6 @@
+---
+# handlers file for node
+- name: Write bootstrapped fact
+  ansible.builtin.lineinfile:
+    line: "bootstrapped=true"
+    path: /etc/ansible/facts.d/kubernetes.fact

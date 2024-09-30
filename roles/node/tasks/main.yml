@@ -1,0 +1,14 @@
+---
+# tasks file for node
+- name: Import Prerequisites
+  import_tasks: prerequisites.yml
+
+- name: Import Control Plane Tasks
+  import_tasks: control-plane.yml
+  when:
+    - ( "control_nodes" in group_names )
+
+- name: Import Worker Tasks
+  import_tasks: worker.yml
+  when:
+    - ( "worker_nodes" in group_names )

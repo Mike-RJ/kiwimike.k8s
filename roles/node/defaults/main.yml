@@ -1,0 +1,30 @@
+---
+# defaults file for node
+kubernetes_version: 1.31
+pod_network_cidr: "10.244.0.0/16"
+kubernetes_config: "/etc/kubernetes/admin.conf"
+bootstrap_node: control-plane-node
+
+cni:
+  cilium_version: 1.16.2
+  install_hubble: true
+
+required_packages:
+  prerequisites:
+    - ca-certificates
+    - curl
+    - apt-transport-https
+    - ca-certificates
+    - gpg
+    - gnupg
+  containerd:
+    - containerd.io=1.7.22-1
+  kubernetes:
+    - kubectl=1.31.1-1.1
+    - kubeadm=1.31.1-1.1
+    - kubelet=1.31.1-1.1
+  helm:
+    - helm=3.16.1-1
+
+advanced:
+  modify_hosts_file: false

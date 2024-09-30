@@ -1,0 +1,9 @@
+---
+- name: Join node to cluster
+  command: "{{ hostvars[bootstrap_node].join_command }}"
+  args:
+    creates: /etc/kubernetes/kubelet.conf
+  when:
+    ansible_local.kubernetes.node.bootstrapped is not defined or not ansible_local.kubernetes.node.bootstrapped
+  notify:
+    - Write bootstrapped fact

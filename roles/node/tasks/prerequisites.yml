@@ -1,0 +1,140 @@
+---
+
+- name: Create Ansible Fact
+  block:
+
+    - name: Setup custom facts directory
+      ansible.builtin.file:
+        path: /etc/ansible/facts.d
+        owner: "{{ ansible_facts.effective_user_id }}"
+        state: directory
+        recurse: yes
+        mode: u=rwX,g=rX,o=rX
+    
+    - name: Create fact content
+      ansible.builtin.set_fact:
+        control_plane_fact: |
+          [node]
+    
+    - name: Create fact for node configuration
+      ansible.builtin.copy:
+        content: "{{ control_plane_fact }}"
+        dest: /etc/ansible/facts.d/kubernetes.fact
+        owner: "{{ ansible_facts.effective_user_id }}"
+        mode: u=rw,g=r,o=r
+      when: ansible_local.kubernetes.node is not defined
+
+- name: Setup hosts file
+  block:
+    
+    - name: Generate host list
+      ansible.builtin.set_fact:
+        all_hosts: "{{ all_hosts | default([]) + [{'name': hostvars[item]['ansible_hostname'], 'ip': hostvars[item]['ansible_default_ipv4']['address']}] }}"
+      loop: "{{ groups['all'] }}"
+    
+    - name: Create hosts file content
+      ansible.builtin.template:
+        src: hosts.j2
+        dest: /etc/hosts
+        owner: root
+        group: root
+        mode: u=rw,g=r,o=r
+  
+  when:
+    - advanced.modify_hosts_file
+
+
+- name: Disable SWAP Runtime
+  ansible.builtin.command: swapoff -a
+  become: true
+
+- name: Disable SWAP in fstab
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^(\s*)([^#\n]+\s+)(\w+\s+)swap(\s+.*)$'
+    replace: '#\1\2\3swap\4'
+    backup: yes
+  become: true
+
+- name: Enable IPv4 Packet Forwarding
+  ansible.posix.sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    state: present
+    reload: true
+  become: true
+
+- name: Install prerequiste apt packages
+  ansible.builtin.apt:
+    name: "{{ required_packages.prerequisites }}"
+    update_cache: true
+  become: true
+
+- name: Setup Containerd
+  block:
+
+    - name: Get Docker GPG Key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+    
+    - name: Setup Docker Repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu   {{ ansible_facts.distribution_release }} stable"
+        state: present
+
+    
+    - name: Install Containerd
+      ansible.builtin.apt:
+        name: "{{ required_packages.containerd }}"
+        update_cache: true
+        state: present
+    
+    - name: Lock containerd version
+      ansible.builtin.dpkg_selections:
+        name: containerd
+        selection: hold
+    
+    - name: Set containerd to use systemd
+      ansible.builtin.template:
+        src: config.toml.j2
+        dest: /etc/containerd/config.toml
+        owner: root
+        group: root
+        mode: u=rw,g=r,o=r
+      register: containerd_config
+    
+    - name: Restart containerd if configuraton updated
+      ansible.builtin.service:
+        name: containerd
+        state: restarted
+      when: containerd_config.changed
+
+- name: Intall Kubernetes Packages
+  block:
+
+
+    - name: Setup Kubernetes GPG key
+      ansible.builtin.apt_key:
+        url: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/Release.key"
+        keyring: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        state: present
+    
+    - name: Setup Kubernetes Repository
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/ /"
+        state: present
+    
+    - name: Install Kubernetes Packages
+      ansible.builtin.apt:
+        name: "{{ required_packages.kubernetes }}"
+        state: present
+        update_cache: true
+    
+    - name: Lock Kubernetes Version
+      ansible.builtin.dpkg_selections:
+        name: "{{ item | regex_replace('[^A-Za-z]', '') }}"
+        selection: hold
+      loop: "{{ required_packages.kubernetes }}"
+      
+      
