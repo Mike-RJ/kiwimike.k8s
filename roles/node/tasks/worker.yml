@@ -1,9 +1,38 @@
 ---
-- name: Join node to cluster
-  command: "{{ hostvars[bootstrap_node].join_command }}"
-  args:
-    creates: /etc/kubernetes/kubelet.conf
+- name: Get hostnames for worker nodes
+  ansible.builtin.set_fact:
+    worker_hostnames: "{{ groups['worker_nodes'] | map('extract', hostvars, ['ansible_hostname']) | list }}"
+  run_once: true
+
+- name: Enrol node
+  block:
+
+    - name: Join node to cluster
+      command: "{{ hostvars[bootstrap_node].join_command }}"
+      args:
+        creates: /etc/kubernetes/kubelet.conf
+      when: ansible_local.kubernetes is not defined or ansible.local.kubernetes.node is not defined or ansible_local.kubernetes.node.bootstrapped is not defined or not ansible_local.kubernetes.node.bootstrapped
+      notify:
+        - Write bootstrapped fact
+      become: true
+    
+    - name: Reboot node
+      ansible.builtin.reboot:
+        pre_reboot_delay: 60
+        post_reboot_delay: 60
+      become: true
+  
   when:
-    ansible_local.kubernetes.node.bootstrapped is not defined or not ansible_local.kubernetes.node.bootstrapped
+    - ( "worker_nodes" in group_names )
+
+  always:
+    - name: Update fact
+      ansible.builtin.lineinfile:
+        line: "bootstrappede=true"
+        path: /etc/ansible/facts.d/kubernetes.fact
+      become: true
+
   notify:
-    - Write bootstrapped fact
+    - Update node role
+
+  

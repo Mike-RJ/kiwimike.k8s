@@ -10,6 +10,7 @@
         state: directory
         recurse: yes
         mode: u=rwX,g=rX,o=rX
+      become: true
     
     - name: Create fact content
       ansible.builtin.set_fact:
@@ -23,6 +24,7 @@
         owner: "{{ ansible_facts.effective_user_id }}"
         mode: u=rw,g=r,o=r
       when: ansible_local.kubernetes.node is not defined
+      become: true
 
 - name: Setup hosts file
   block:
@@ -39,6 +41,7 @@
         owner: root
         group: root
         mode: u=rw,g=r,o=r
+      become: true
   
   when:
     - advanced.modify_hosts_file
@@ -56,13 +59,46 @@
     backup: yes
   become: true
 
-- name: Enable IPv4 Packet Forwarding
-  ansible.posix.sysctl:
-    name: net.ipv4.ip_forward
-    value: '1'
-    state: present
-    reload: true
-  become: true
+- name: Enable Kernel Parameters
+  block:
+    
+    - name: Enable overlay kernel module
+      community.general.modprobe:
+        name: overlay
+        persistent: present
+        state: present
+      become: true
+    
+    - name: Enable br_netfilter kernel module
+      community.general.modprobe:
+        name: br_netfilter
+        persistent: present
+        state: present
+      become: true
+    
+    - name: Enable IPv4 Packet Forwarding
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: '1'
+        state: present
+        reload: true
+      become: true
+    
+    - name: Enable Bridge IPTables IPv4
+      ansible.posix.sysctl:
+        name: net.bridge.bridge-nf-call-ip6tables
+        value: '1'
+        state: present
+        reload: true
+      become: true
+    
+    - name: Enable Bridge IPTables IPv6
+      ansible.posix.sysctl:
+        name: net.bridge.bridge-nf-call-iptables
+        value: '1'
+        state: present
+        reload: true
+      become: true
 
 - name: Install prerequiste apt packages
   ansible.builtin.apt:
@@ -77,11 +113,13 @@
       ansible.builtin.get_url:
         url: https://download.docker.com/linux/ubuntu/gpg
         dest: /etc/apt/keyrings/docker.asc
+      become: true
     
     - name: Setup Docker Repository
       ansible.builtin.apt_repository:
         repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu   {{ ansible_facts.distribution_release }} stable"
         state: present
+      become: true
 
     
     - name: Install Containerd
@@ -89,11 +127,13 @@
         name: "{{ required_packages.containerd }}"
         update_cache: true
         state: present
+      become: true
     
     - name: Lock containerd version
       ansible.builtin.dpkg_selections:
         name: containerd
         selection: hold
+      become: true
     
     - name: Set containerd to use systemd
       ansible.builtin.template:
@@ -103,12 +143,14 @@
         group: root
         mode: u=rw,g=r,o=r
       register: containerd_config
+      become: true
     
     - name: Restart containerd if configuraton updated
       ansible.builtin.service:
         name: containerd
         state: restarted
       when: containerd_config.changed
+      become: true
 
 - name: Intall Kubernetes Packages
   block:
@@ -119,22 +161,26 @@
         url: "https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/Release.key"
         keyring: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
         state: present
+      become: true
     
     - name: Setup Kubernetes Repository
       ansible.builtin.apt_repository:
         repo: "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v{{ kubernetes_version }}/deb/ /"
         state: present
+      become: true
     
     - name: Install Kubernetes Packages
       ansible.builtin.apt:
         name: "{{ required_packages.kubernetes }}"
         state: present
         update_cache: true
+      become: true
     
     - name: Lock Kubernetes Version
       ansible.builtin.dpkg_selections:
         name: "{{ item | regex_replace('[^A-Za-z]', '') }}"
         selection: hold
       loop: "{{ required_packages.kubernetes }}"
+      become: true
       
       

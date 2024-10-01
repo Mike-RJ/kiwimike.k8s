@@ -7,46 +7,75 @@
         url: "https://baltocdn.com/helm/signing.asc"
         keyring: "/usr/share/keyrings/helm.gpg"
         state: present
+      become: true 
     
     - name: Setup Helm Repository
       ansible.builtin.apt_repository:
         repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main"
         state: present
+      become: true
     
     - name: Install Helm packages
       ansible.builtin.apt:
         name: "{{ required_packages.helm }}"
         state: present
         update_cache: true
+      become: true
     
     - name: Lock helm version
       ansible.builtin.dpkg_selections:
         name: "{{ item | regex_replace('[^A-Za-z]', '') }}"
         selection: hold
       loop: "{{ required_packages.helm }}"
+      become: true
       
 
 - name: Initialise Kubernetes Cluster
   block:
 
-    # - name: Initialise Kubernetes Cluster with Kubeadm
-    #   command: "kubeadm init --pod-network-cidr={{ pod_network_cidr }} --apiserver-advertise-address={{ ansible_facts.default_ipv4.address }} --ignore-preflight-errors=Mem"
-    #   #run_once: true
-    #   register: kubeadm_command
-    #   when: ansible_local.kubernetes.node.control_plane is not defined or not ansible_local.kubernetes.node.control_plane | bool
-
     - name: Initialise Kubernetes Cluster with Kubeadm
-      command: "kubeadm init --pod-network-cidr={{ pod_network_cidr }} --ignore-preflight-errors=Mem"
+      command: "kubeadm init --pod-network-cidr={{ pod_network_cidr }} --apiserver-advertise-address={{ ansible_facts.default_ipv4.address }} --ignore-preflight-errors=Mem"
       #run_once: true
       register: kubeadm_command
-      #when: not ansible_local.kubernetes.node.control_plane
+      when: ansible_local.kubernetes is not defined or ansible.local.kubernetes.node is not defined or ansible_local.kubernetes.node.control_plane is not defined or not ansible_local.kubernetes.node.control_plane
+      become: true
+
+    - name: Reboot control plane node
+      ansible.builtin.reboot:
+        pre_reboot_delay: 60
+        post_reboot_delay: 60
+      become: true
+
+    - name: Get current user
+      ansible.builtin.set_fact:
+        username: "{{ ansible_facts.env.USER }}"
+      become: false
+    
+    - name: Create .kube directory
+      ansible.builtin.file:
+        path: "/home/{{ username }}/.kube"
+        owner: "{{ username }}"
+        group: "{{ username }}"
+        state: directory
+        recurse: yes
+      become: true
+    
+    - name: Create kube config
+      ansible.builtin.copy:
+        remote_src: yes
+        src: /etc/kubernetes/admin.conf
+        dest: "/home/{{ username }}/.kube/config"
+        owner: "{{ username }}"
+        group: "{{ username }}"
+        mode: 0600
+      become: true
 
     
     - name: Add Helm Repository for Cilium
       kubernetes.core.helm_repository:
         name: cilium
         repo_url: https://helm.cilium.io/
-      run_once: true
+      become: true
     
     - name: Install Cilium
       kubernetes.core.helm:
@@ -54,10 +83,10 @@
         chart_ref: cilium/cilium
         release_namespace: kube-system
         chart_version: "{{ cni.cilium_version }}"
-        kubeconfig: "{{ kubernetes_config }}"
-      run_once: true
+        #kubeconfig: "/home/{{ username }}/.kube/config"
       notify:
         - Write bootstrapped fact
+      become: true
 
   when:
     - ansible_facts.hostname == bootstrap_node
@@ -68,6 +97,7 @@
       ansible.builtin.lineinfile:
         line: "control_plane=true"
         path: /etc/ansible/facts.d/kubernetes.fact
+      become: true
           
 
 - name: Save Join Command
@@ -76,10 +106,11 @@
     - name: Generate Join Command
       ansible.builtin.command: kubeadm token create --print-join-command
       register: join_command
+      become: true
     
     - name: Set Fact
       ansible.builtin.set_fact:
         join_command: "{{ join_command.stdout_lines[0] }}"
   
-  # when:
-  #   - ansible_facts.hostname == bootstrap_node
+  when:
+    - ansible_facts.hostname == bootstrap_node
